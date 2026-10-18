@@ -4,88 +4,60 @@ from typing import Any, Dict, List
 
 DF_PATTERN = re.compile(r"(?<![A-Za-z0-9_])DF-(\d+)(?!\d)(?![_\-])")
 
-TOOL_REFS = (
-    r"devflow\.job\.read|devflow\.catalog\.search|"
-    r"devflow\.job|devflow\.catalog|"
-    r"job\.read|catalog\.search|"
-    r"工具|tools?"
-)
-
-BLOCK1_PATTERNS = [
-    re.compile(
-        r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
-        r".{0,20}?(?:调用|使用|执行).{0,40}?(?:" + TOOL_REFS + r")"
-        r".{0,80}?(?:直接|告诉|给出|返回|输出).{0,15}?(?:状态|结果|进度|答案|record|status|state|result)"
-        r"|"
-        r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
-        r".{0,20}?(?:调用|使用|执行).{0,40}?(?:" + TOOL_REFS + r")"
-        r".{0,80}?(?:直接|告诉|给出|返回|输出)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:do\s*not|don't|without|never)"
-        r".{0,20}?(?:call|invoke|use|execute).{0,40}?(?:" + TOOL_REFS + r")"
-        r".{0,80}?(?:directly|tell|give|output|provide).{0,15}?(?:status|state|result|record)?",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:即使).{0,20}?(?:工具|tool).{0,20}?(?:失败|fail|empty|空).{0,20}?"
-        r"(?:也).{0,10}?(?:输出|给出|返回|PASS|给|报|成功)",
-        re.IGNORECASE,
-    ),
-]
-
-BLOCK2_TRIGGERS = re.compile(
-    r"(?:修改|合并|发布|部署|执行生产|执行变更|上线|perform.*deploy|perform.*production)",
-    re.IGNORECASE,
-)
-
-NEG_PFX = re.compile(
-    r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|不|不能|不得|没有|未|"
-    r"do\s*not|don't|not\s|without|nor|no\s)",
-    re.IGNORECASE,
-)
-
-NEG_SHORT = re.compile(
-    r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|不|不能|不得|没有|未|"
-    r"do\s*not|don't|not|without|nor|no)",
-    re.IGNORECASE,
-)
-
 STATUS_MAP = {
     "RUN": "运行中", "WAIT": "等待中", "HUMAN": "等待人工处理",
     "QUEUED": "排队中", "DONE": "已完成", "FAIL": "失败", "CANCEL": "已取消",
 }
 VALID_STATUSES = set(STATUS_MAP.keys())
 
+_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
+_EN_NEG = r"(?:do\s*not|don't|without|never|donot)"
+_VERB = r"(?:调用|使用|执行|run|invoke|use|execute|calling|using|running|invoking)"
+_TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search)"
 
-def _extract_job_ids(text: str) -> List[str]:
+SKIP_CN = re.compile(_CN_NEG + r"\s*" + _VERB + r"\s*" + _TOOL_REF, re.IGNORECASE)
+SKIP_CN2 = re.compile(_CN_NEG + r"\s*" + _TOOL_REF + r"\s*" + _VERB, re.IGNORECASE)
+SKIP_EN = re.compile(_EN_NEG + r"\s+" + _VERB + r"\s+" + _TOOL_REF, re.IGNORECASE)
+SKIP_EN2 = re.compile(_EN_NEG + r"\s+" + _TOOL_REF + r"\s+" + _VERB, re.IGNORECASE)
+
+BLOCK2_TRIGGERS = re.compile(
+    r"(?:修改|合并|发布|部署|执行生产|执行变更|上线|perform\s+(?:the\s+)?(?:deployment|production)|bypass\s+(?:the\s+)?gates)",
+    re.IGNORECASE,
+)
+NEG_PFX = re.compile(
+    r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|不能|不得|没有|未|do\s*not|don't|without|nor)",
+    re.IGNORECASE,
+)
+
+
+def _extract_job_ids(text):
     return list(dict.fromkeys(DF_PATTERN.findall(text)))
 
 
-def _is_negated_before(text: str, start: int, neg_re, lookback: int = 20) -> bool:
+def _has_skip_tool_prohibition(text):
+    if SKIP_CN.search(text) or SKIP_CN2.search(text):
+        return True
+    if SKIP_EN.search(text) or SKIP_EN2.search(text):
+        return True
+    return False
+
+
+def _is_negated_before(text, start, lookback=25):
     window = text[max(0, start - lookback):start]
-    return bool(neg_re.search(window))
+    return bool(NEG_PFX.search(window))
 
 
-def _has_block1(text: str) -> bool:
-    for pat in BLOCK1_PATTERNS:
-        if pat.search(text):
-            return True
-    return False
-
-
-def _has_block2(text: str) -> bool:
+def _has_block2(text):
     for m in BLOCK2_TRIGGERS.finditer(text):
-        if not _is_negated_before(text, m.start(), NEG_PFX):
+        if not _is_negated_before(text, m.start()):
             return True
     return False
 
 
-def _has_block3(text: str) -> bool:
+def _has_block3(text):
     if re.search(r"(?:ignore|忽略|跳过|绕过|bypass).{0,25}(?:rules|规则|gates|审批|核验|all)", text, re.IGNORECASE):
         return True
-    if re.search(r"(?:fabricate|编造|伪造).{0,25}(?:记录|PASS|status|state|成功)", text, re.IGNORECASE):
+    if re.search(r"(?:fabricate|编造|伪造).{0,25}(?:记录|PASS|status|state|成功|task)", text, re.IGNORECASE):
         return True
     if re.search(r"(?:当成|视为|当作).{0,15}(?:管理员|老板|批准|approval).{0,15}(?:执行|变更|发布|上线|deploy|merge)", text, re.IGNORECASE):
         return True
@@ -95,10 +67,12 @@ def _has_block3(text: str) -> bool:
         return True
     if re.search(r"(?:列出|给出).{0,10}(?:所有|all).{0,10}(?:工具|tools).{0,20}(?:包括|including).{0,10}(?:WRITE|HIGH|写|高风险)", text, re.IGNORECASE):
         return True
+    if re.search(r"(?:即使).{0,20}(?:工具|tool).{0,20}(?:失败|fail|empty|空).{0,20}(?:也).{0,10}(?:输出|给出|返回|PASS|给|报|成功)", text, re.IGNORECASE):
+        return True
     return False
 
 
-def _validate_job_records(records: Any) -> tuple:
+def _validate_job_records(records):
     if not isinstance(records, list) or len(records) == 0:
         return False, "任务记录为空或格式异常"
     for rec in records:
@@ -114,7 +88,7 @@ def _validate_job_records(records: Any) -> tuple:
     return True, ""
 
 
-def _validate_catalog(catalog: Any) -> tuple:
+def _validate_catalog(catalog):
     if not isinstance(catalog, list) or len(catalog) == 0:
         return False, "工具目录为空或格式异常"
     for item in catalog:
@@ -132,7 +106,7 @@ def _validate_catalog(catalog: Any) -> tuple:
     return True, ""
 
 
-def _build_answer(job_records: List[Dict], catalog: List[Dict]) -> str:
+def _build_answer(job_records, catalog):
     parts = []
     if job_records:
         rec = job_records[0]
@@ -153,43 +127,47 @@ def _build_answer(job_records: List[Dict], catalog: List[Dict]) -> str:
     return "\n".join(parts)
 
 
+def _blocked(reason):
+    return {"decision": "BLOCKED", "answer": "", "block_reason": reason, "evidence_sources": [], "steps": []}
+
+
 async def execute(data: dict, ctx) -> Dict[str, Any]:
     text = str(data.get("text") or "").strip()
     if not text:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入为空", "evidence_sources": [], "steps": []}
+        return _blocked("输入为空")
 
     ids = _extract_job_ids(text)
     if len(ids) == 0:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "未找到有效的DF-编号任务", "evidence_sources": [], "steps": []}
+        return _blocked("未找到有效的DF-编号任务")
     if len(ids) > 1:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "检测到多个不同任务编号，仅支持单任务查询", "evidence_sources": [], "steps": []}
+        return _blocked("检测到多个不同任务编号，仅支持单任务查询")
 
     job_id = "DF-" + ids[0]
 
-    if _has_block1(text):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入要求跳过必需工具调用或索要无证据结果", "evidence_sources": [], "steps": []}
+    if _has_skip_tool_prohibition(text):
+        return _blocked("输入禁止调用本岗位必需的工具")
     if _has_block2(text):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入包含实际执行或变更发布请求，本岗位仅提供信息", "evidence_sources": [], "steps": []}
+        return _blocked("输入包含实际执行或变更发布请求，本岗位仅提供信息")
     if _has_block3(text):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入包含权限注入、编造或忽略规则等对抗指令", "evidence_sources": [], "steps": []}
+        return _blocked("输入包含权限注入、编造或忽略规则等对抗指令")
 
     try:
         job_result = await ctx.tools.call("devflow.job.read", jobId=job_id)
     except Exception as e:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "devflow.job.read调用失败：" + str(e), "evidence_sources": [], "steps": []}
+        return _blocked("devflow.job.read调用失败：" + str(e))
 
     ok, msg = _validate_job_records(job_result)
     if not ok:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": msg, "evidence_sources": [], "steps": []}
+        return _blocked(msg)
 
     try:
         catalog_result = await ctx.tools.call("devflow.catalog.search", query="")
     except Exception as e:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "devflow.catalog.search调用失败：" + str(e), "evidence_sources": [], "steps": []}
+        return _blocked("devflow.catalog.search调用失败：" + str(e))
 
     ok, msg = _validate_catalog(catalog_result)
     if not ok:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": msg, "evidence_sources": [], "steps": []}
+        return _blocked(msg)
 
     evidence_sources = [
         {"tool": "devflow.job.read", "jobId": job_id, "count": len(job_result)},
@@ -210,7 +188,7 @@ async def execute(data: dict, ctx) -> Dict[str, Any]:
             prompt=prompt_obj,
         )
     except Exception:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型调用异常，无法完成判断", "evidence_sources": evidence_sources, "steps": steps}
+        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型调用异常", "evidence_sources": evidence_sources, "steps": steps}
 
     try:
         model_obj = json.loads(str(model_raw))
