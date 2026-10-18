@@ -10,15 +10,17 @@ STATUS_MAP = {
 }
 VALID_STATUSES = set(STATUS_MAP.keys())
 
-_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
-_EN_NEG = r"(?:do\s*not|don't|without|never|donot)"
-_VERB = r"(?:调用|使用|执行|run|invoke|use|execute|calling|using|running|invoking)"
-_TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search)"
+_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许|跳过|不调用|不读取)"
+_EN_NEG = r"(?:do\s*not|don't|without|never|donot|skip|bypass)"
+_VERB = r"(?:调用|使用|执行|读取|run|invoke|use|execute|calling|called|call|using|running|invoking|skip|skipping|bypass)"
+_TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search|all\s+tools|所有工具)"
 
 SKIP_CN = re.compile(_CN_NEG + r"\s*" + _VERB + r"\s*" + _TOOL_REF, re.IGNORECASE)
 SKIP_CN2 = re.compile(_CN_NEG + r"\s*" + _TOOL_REF + r"\s*" + _VERB, re.IGNORECASE)
 SKIP_EN = re.compile(_EN_NEG + r"\s+" + _VERB + r"\s+" + _TOOL_REF, re.IGNORECASE)
 SKIP_EN2 = re.compile(_EN_NEG + r"\s+" + _TOOL_REF + r"\s+" + _VERB, re.IGNORECASE)
+SKIP_CN3 = re.compile(_CN_NEG + r"\s*" + _TOOL_REF, re.IGNORECASE)
+SKIP_EN3 = re.compile(_EN_NEG + r"\s+" + _TOOL_REF, re.IGNORECASE)
 
 BLOCK2_TRIGGERS = re.compile(
     r"(?:修改|合并|发布|部署|执行生产|执行变更|上线|perform\s+(?:the\s+)?(?:deployment|production)|bypass\s+(?:the\s+)?gates)",
@@ -38,6 +40,8 @@ def _has_skip_tool_prohibition(text):
     if SKIP_CN.search(text) or SKIP_CN2.search(text):
         return True
     if SKIP_EN.search(text) or SKIP_EN2.search(text):
+        return True
+    if SKIP_CN3.search(text) or SKIP_EN3.search(text):
         return True
     return False
 
