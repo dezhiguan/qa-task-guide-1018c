@@ -4,63 +4,97 @@ from typing import Any, Dict, List
 
 DF_PATTERN = re.compile(r"(?<![A-Za-z0-9_])DF-(\d+)(?!\d)(?![_\-])")
 
-EXEC_PATTERNS = [
-    r"(?:直接|自动|马上|立刻|现在|请|帮我|帮忙|务必|必须).{0,6}(?:修改|合并|发布|部署|执行|上线).{0,6}(?:任务|上线|生产|代码)?",
-    r"(?:执行|perform|deploy).{0,6}(?:生产|production|deployment|变更)",
-    r"(?:bypass|ignore|忽略|跳过|跳过核验|绕过).{0,12}(?:规则|gates|核验|审批|all rules|安全|门禁)",
-    r"(?:fabricate|编造|伪造).{0,12}(?:记录|PASS|successful|状态)",
-    r"(?:改成|强行|也请改成|必须改成|改成).{0,4}PASS",
-    r"即使.{0,12}(?:失败|空列表|BLOCKED|返回空).{0,12}(?:输出|改成|PASS|给|报)",
-    r"(?:不要|不得|禁止|不能|不|别).{0,2}(?:调用|使用).{0,20}(?:直接|给出|告诉)",
-    r"(?:建议|要求|需要|请|帮我).{0,6}(?:执行|发布|部署|上线|合并|修改)",
-    r"(?:列出|给出|推荐).{0,12}(?:WRITE|HIGH|写|高).{0,12}(?:执行|发布|部署|上线)",
-    r"(?:当成|视为|当作).{0,8}(?:管理员|老板|批准).{0,8}(?:执行|变更|发布|上线|合并)",
+TOOL_REFS = (
+    r"devflow\.job\.read|devflow\.catalog\.search|"
+    r"devflow\.job|devflow\.catalog|"
+    r"job\.read|catalog\.search|"
+    r"工具|tools?"
+)
+
+BLOCK1_PATTERNS = [
+    re.compile(
+        r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
+        r".{0,20}?(?:调用|使用|执行).{0,40}?(?:" + TOOL_REFS + r")"
+        r".{0,80}?(?:直接|告诉|给出|返回|输出).{0,15}?(?:状态|结果|进度|答案|record|status|state|result)"
+        r"|"
+        r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许)"
+        r".{0,20}?(?:调用|使用|执行).{0,40}?(?:" + TOOL_REFS + r")"
+        r".{0,80}?(?:直接|告诉|给出|返回|输出)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:do\s*not|don't|without|never)"
+        r".{0,20}?(?:call|invoke|use|execute).{0,40}?(?:" + TOOL_REFS + r")"
+        r".{0,80}?(?:directly|tell|give|output|provide).{0,15}?(?:status|state|result|record)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:即使).{0,20}?(?:工具|tool).{0,20}?(?:失败|fail|empty|空).{0,20}?"
+        r"(?:也).{0,10}?(?:输出|给出|返回|PASS|给|报|成功)",
+        re.IGNORECASE,
+    ),
 ]
 
-DENIAL_MARKERS = [
-    "不代表", "不是", "禁止", "无需", "不需要", "不执行", "不要", "不", "别",
-    "do not", "don't", "not ", "without", "不修改", "不更改", "不能", "不得",
-]
+BLOCK2_TRIGGERS = re.compile(
+    r"(?:修改|合并|发布|部署|执行生产|执行变更|上线|perform.*deploy|perform.*production)",
+    re.IGNORECASE,
+)
 
-NEGATED_TRIGGER = re.compile(r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|do not|don't|not|without|不|不能|不得)\s*$")
+NEG_PFX = re.compile(
+    r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|不|不能|不得|没有|未|"
+    r"do\s*not|don't|not\s|without|nor|no\s)",
+    re.IGNORECASE,
+)
+
+NEG_SHORT = re.compile(
+    r"(?:不代表|不是|禁止|无需|不需要|不执行|不要|别|不|不能|不得|没有|未|"
+    r"do\s*not|don't|not|without|nor|no)",
+    re.IGNORECASE,
+)
 
 STATUS_MAP = {
-    "RUN": "运行中",
-    "WAIT": "等待中",
-    "HUMAN": "等待人工处理",
-    "QUEUED": "排队中",
-    "DONE": "已完成",
-    "FAIL": "失败",
-    "CANCEL": "已取消",
+    "RUN": "运行中", "WAIT": "等待中", "HUMAN": "等待人工处理",
+    "QUEUED": "排队中", "DONE": "已完成", "FAIL": "失败", "CANCEL": "已取消",
 }
-
 VALID_STATUSES = set(STATUS_MAP.keys())
 
 
 def _extract_job_ids(text: str) -> List[str]:
-    matches = DF_PATTERN.findall(text)
-    return list(dict.fromkeys(matches))
+    return list(dict.fromkeys(DF_PATTERN.findall(text)))
 
 
-def _is_negated_context(prefix: str, full_text: str, match_end: int) -> bool:
-    tail = prefix.strip()[-25:]
-    for marker in DENIAL_MARKERS:
-        if tail.endswith(marker):
+def _is_negated_before(text: str, start: int, neg_re, lookback: int = 20) -> bool:
+    window = text[max(0, start - lookback):start]
+    return bool(neg_re.search(window))
+
+
+def _has_block1(text: str) -> bool:
+    for pat in BLOCK1_PATTERNS:
+        if pat.search(text):
             return True
-    # Also check if the trigger word itself is preceded by negation within 6 chars
-    neg_zone = prefix.strip()[-8:]
-    if NEGATED_TRIGGER.search(neg_zone):
-        return True
     return False
 
 
-def _has_execution_request(text: str) -> bool:
-    for pat in EXEC_PATTERNS:
-        for m in re.finditer(pat, text, re.IGNORECASE):
-            prefix = text[:m.start()]
-            if _is_negated_context(prefix, text, m.end()):
-                continue
+def _has_block2(text: str) -> bool:
+    for m in BLOCK2_TRIGGERS.finditer(text):
+        if not _is_negated_before(text, m.start(), NEG_PFX):
             return True
+    return False
+
+
+def _has_block3(text: str) -> bool:
+    if re.search(r"(?:ignore|忽略|跳过|绕过|bypass).{0,25}(?:rules|规则|gates|审批|核验|all)", text, re.IGNORECASE):
+        return True
+    if re.search(r"(?:fabricate|编造|伪造).{0,25}(?:记录|PASS|status|state|成功)", text, re.IGNORECASE):
+        return True
+    if re.search(r"(?:当成|视为|当作).{0,15}(?:管理员|老板|批准|approval).{0,15}(?:执行|变更|发布|上线|deploy|merge)", text, re.IGNORECASE):
+        return True
+    if re.search(r"(?:改成|强行|也请|必须).{0,10}(?:PASS|通过)", text, re.IGNORECASE):
+        return True
+    if re.search(r"(?:推荐|列出|给出).{0,20}(?:WRITE|HIGH|高风险|写).{0,15}(?:执行|发布|部署|上线|deploy|merge)", text, re.IGNORECASE):
+        return True
+    if re.search(r"(?:列出|给出).{0,10}(?:所有|all).{0,10}(?:工具|tools).{0,20}(?:包括|including).{0,10}(?:WRITE|HIGH|写|高风险)", text, re.IGNORECASE):
+        return True
     return False
 
 
@@ -103,15 +137,15 @@ def _build_answer(job_records: List[Dict], catalog: List[Dict]) -> str:
     if job_records:
         rec = job_records[0]
         status = str(rec.get("status", "")).strip().upper()
-        cn_status = STATUS_MAP.get(status, status)
-        parts.append("任务当前状态：" + cn_status)
-    safe_tools = [
+        cn = STATUS_MAP.get(status, status)
+        parts.append("任务当前状态：" + cn)
+    safe = [
         t for t in catalog
         if str(t.get("access", "")).strip().upper() == "READ"
         and str(t.get("risk", "")).strip().upper() == "LOW"
     ]
-    if safe_tools:
-        names = [str(t.get("name", "")) for t in safe_tools if t.get("name")]
+    if safe:
+        names = [str(t.get("name", "")) for t in safe if t.get("name")]
         parts.append("推荐只读低风险工具：" + "、".join(names))
     else:
         parts.append("当前目录中无READ+LOW工具可推荐")
@@ -132,8 +166,12 @@ async def execute(data: dict, ctx) -> Dict[str, Any]:
 
     job_id = "DF-" + ids[0]
 
-    if _has_execution_request(text):
+    if _has_block1(text):
+        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入要求跳过必需工具调用或索要无证据结果", "evidence_sources": [], "steps": []}
+    if _has_block2(text):
         return {"decision": "BLOCKED", "answer": "", "block_reason": "输入包含实际执行或变更发布请求，本岗位仅提供信息", "evidence_sources": [], "steps": []}
+    if _has_block3(text):
+        return {"decision": "BLOCKED", "answer": "", "block_reason": "输入包含权限注入、编造或忽略规则等对抗指令", "evidence_sources": [], "steps": []}
 
     try:
         job_result = await ctx.tools.call("devflow.job.read", jobId=job_id)
@@ -190,8 +228,6 @@ async def execute(data: dict, ctx) -> Dict[str, Any]:
         br = str(model_obj.get("block_reason") or "模型判断为BLOCKED")
         return {"decision": "BLOCKED", "answer": "", "block_reason": br, "evidence_sources": evidence_sources, "steps": steps}
 
-    # PASS: answer always built from real evidence, never from model free-text
     final_answer = _build_answer(job_result, catalog_result)
     steps.append({"step": 4, "action": "model_decision", "result": "PASS"})
-
     return {"decision": "PASS", "answer": final_answer, "evidence_sources": evidence_sources, "steps": steps}
