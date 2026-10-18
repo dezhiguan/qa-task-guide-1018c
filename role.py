@@ -10,7 +10,7 @@ STATUS_MAP = {
 }
 VALID_STATUSES = set(STATUS_MAP.keys())
 
-_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许|跳过|不调用|不读取)"
+_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许|跳过|不调用|不读取|不要调用)"
 _EN_NEG = r"(?:do\s*not|don't|without|never|donot|skip|bypass)"
 _VERB = r"(?:调用|使用|执行|读取|run|invoke|use|execute|calling|called|call|using|running|invoking|skip|skipping|bypass)"
 _TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search|all\s+tools|所有工具)"
@@ -131,8 +131,14 @@ def _build_answer(job_records, catalog):
     return "\n".join(parts)
 
 
-def _blocked(reason):
-    return {"decision": "BLOCKED", "answer": "", "block_reason": reason, "evidence_sources": [], "steps": []}
+def _blocked(reason, evidence_sources=None, steps=None):
+    return {
+        "decision": "BLOCKED",
+        "answer": "",
+        "block_reason": reason,
+        "evidence_sources": evidence_sources or [],
+        "steps": steps or [],
+    }
 
 
 async def execute(data: dict, ctx) -> Dict[str, Any]:
@@ -164,22 +170,27 @@ async def execute(data: dict, ctx) -> Dict[str, Any]:
     if not ok:
         return _blocked(msg)
 
+    partial_evidence = [
+        {"tool": "devflow.job.read", "jobId": job_id, "count": len(job_result)},
+    ]
+    partial_steps = [
+        {"step": 1, "action": "extract_job_id", "result": job_id},
+        {"step": 2, "action": "call_devflow.job.read", "result": str(len(job_result)) + " records"},
+    ]
+
     try:
         catalog_result = await ctx.tools.call("devflow.catalog.search", query="")
     except Exception as e:
-        return _blocked("devflow.catalog.search调用失败：" + str(e))
+        return _blocked("devflow.catalog.search调用失败：" + str(e), partial_evidence, partial_steps)
 
     ok, msg = _validate_catalog(catalog_result)
     if not ok:
-        return _blocked(msg)
+        return _blocked(msg, partial_evidence, partial_steps)
 
-    evidence_sources = [
-        {"tool": "devflow.job.read", "jobId": job_id, "count": len(job_result)},
+    evidence_sources = partial_evidence + [
         {"tool": "devflow.catalog.search", "query": "", "count": len(catalog_result)},
     ]
-    steps = [
-        {"step": 1, "action": "extract_job_id", "result": job_id},
-        {"step": 2, "action": "call_devflow.job.read", "result": str(len(job_result)) + " records"},
+    steps = partial_steps + [
         {"step": 3, "action": "call_devflow.catalog.search", "result": str(len(catalog_result)) + " tools"},
     ]
 
@@ -192,23 +203,23 @@ async def execute(data: dict, ctx) -> Dict[str, Any]:
             prompt=prompt_obj,
         )
     except Exception:
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型调用异常", "evidence_sources": evidence_sources, "steps": steps}
+        return _blocked("模型调用异常", evidence_sources, steps)
 
     try:
         model_obj = json.loads(str(model_raw))
     except (json.JSONDecodeError, TypeError):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型返回非有效JSON", "evidence_sources": evidence_sources, "steps": steps}
+        return _blocked("模型返回非有效JSON", evidence_sources, steps)
 
     if not isinstance(model_obj, dict):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型返回非对象结构", "evidence_sources": evidence_sources, "steps": steps}
+        return _blocked("模型返回非对象结构", evidence_sources, steps)
 
     decision = str(model_obj.get("decision", "")).upper()
     if decision not in ("PASS", "BLOCKED"):
-        return {"decision": "BLOCKED", "answer": "", "block_reason": "模型返回无效decision字段", "evidence_sources": evidence_sources, "steps": steps}
+        return _blocked("模型返回无效decision字段", evidence_sources, steps)
 
     if decision == "BLOCKED":
         br = str(model_obj.get("block_reason") or "模型判断为BLOCKED")
-        return {"decision": "BLOCKED", "answer": "", "block_reason": br, "evidence_sources": evidence_sources, "steps": steps}
+        return _blocked(br, evidence_sources, steps)
 
     final_answer = _build_answer(job_result, catalog_result)
     steps.append({"step": 4, "action": "model_decision", "result": "PASS"})
