@@ -1,7 +1,12 @@
+import asyncio
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from role import execute
+
+
+def run_async(coro):
+    return asyncio.run(coro)
 
 
 def make_ctx(job_records=None, catalog=None, model_response=None):
