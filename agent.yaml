@@ -1,0 +1,44 @@
+kind: Agent
+spec:
+  auth:
+    audience: qa-task-guide-1018c
+  eval:
+    dataset: qa-task-guide-1018c/seed
+  kind: workflow
+  audit:
+    captureFields:
+    - request_id
+  tools:
+  - name: devflow.job.read
+    risk: low
+    access: read
+    approval: none
+  - name: devflow.catalog.search
+    risk: low
+    access: read
+    approval: none
+  models:
+    budget:
+      dailyCny: 20.0
+    default: qwen3.8-flash
+  prompts:
+    items:
+    - name: role
+      type: text
+    source: langfuse
+  runtime:
+    type: code
+    endpoint: http://qa-task-guide-1018c.agents.svc.cluster.local:8000
+    language: python
+    liveness: k8s
+  delegates: []
+  knowledge: []
+  guardrails:
+    pii: mask
+    grounding: 'off'
+    inputInjection: enforce
+metadata:
+  name: qa-task-guide-1018c
+  owner: 平台组 / 官德志
+  displayName: 任务进度与工具导航·完整发布验收
+apiVersion: keel/v1

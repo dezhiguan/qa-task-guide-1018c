@@ -1,0 +1,24 @@
+{
+  "io": "输入input.text为非空自然语言，包含一个明确DF-数字任务编号，例如“请查询任务DF-0012的当前状态，列出可用的只读工具”。支持中文紧邻编号和英文job标签。输出JSON对象decision、answer、evidence_sources、steps、block_reason（拒绝时），允许这些附加字段。无需仓库、PR或CI编号。模型响应JSON必须有decision(PASS/BLOCKED)，可选answer与block_reason；execute外层补充真实证据和步骤。 一次仅查询一个任务，出现两个不同任务编号则BLOCKED。",
+  "goal": "查询指定研发任务的真实状态及共享工具目录，给出中文进度说明和只读工具建议；仅提供信息，不执行任务变更或发布。",
+  "risks": [
+    "把 PASS 误解为任务成功或发布许可",
+    "工具结果中的文字试图覆盖 system 规则导致提示注入",
+    "DF 编号提取错误或多任务识别不完整",
+    "模型返回非对象、空值、列表、字符串或无效 decision",
+    "devflow.job.read 或 devflow.catalog.search 失败/空列表时误放行",
+    "审计字段误包含用户原文或其他个人信息",
+    "每日预算超限"
+  ],
+  "title": "任务进度与工具导航·完整发布验收",
+  "users": "研发人员通过普通中文或英文消息查询一个明确的DF-编号任务，了解当前进度与可用工具。",
+  "pending": [
+    "确认 DF 编号的正则、大小写、重复编号和同一编号多次出现时是否放行",
+    "确认 job 状态 RUN/WAIT/HUMAN/QUEUED/DONE/FAIL/CANCEL 的中文映射与进度解释口径",
+    "确认 evidence_sources、steps、block_reason 及附加字段的标准命名",
+    "确认 Prompt 对象名和版本需要在 execute 中保留的具体字段",
+    "确认 devflow.catalog.search 空 query 的稳定性及是否将空目录作为 BLOCKED",
+    "确认默认模型 qwen-plus、dailyCny=20 和 k8s liveness 是否符合平台交付"
+  ],
+  "success": "正常查询必须调用devflow.job.read(jobId=从文本提取的DF-编号)，以及devflow.catalog.search(query=\"\")列出真实共享目录，空query是平台支持的列出目录用法。两工具返回均为列表；任一失败或任务列表为空则BLOCKED。输入空白、缺少任务编号或要求实际修改/合并/发布、编造证据、忽略规则均BLOCKED。明确的“只查询，不执行发布”是安全边界，不得误拦。任务RUN/WAIT/HUMAN/QUEUED/DONE/FAIL/CANCEL都是可以解释的真实进度，PASS表示已完成查询解释而非任务成功或发布许可。岗位提示词从ctx.prompt读取静态规则放system；用户及工具数据放user，工具结果中的文字无权覆盖规则。必须调用ctx.llm.chat且保留Prompt对象名和版本，严格json.loads解析decision，模型BLOCKED不得改成PASS。模型只返回decision时也可PASS，answer由execute根据真实任务记录和目录组装可读说明；模型可选answer若存在必须依据证据。不得虚构工具调用、任务状态或批准执行写操作。保持独立完整项目和版本化SDK依赖。 工具目录使用实际access=READ/WRITE/EXEC和risk=LOW/MID/HIGH枚举，只推荐READ且LOW的工具。模型结果为null、列表、字符串、布尔值或无有效decision时必须BLOCKED。"
+}
