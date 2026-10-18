@@ -10,17 +10,25 @@ STATUS_MAP = {
 }
 VALID_STATUSES = set(STATUS_MAP.keys())
 
-_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许|跳过|不调用|不读取|不要调用)"
-_EN_NEG = r"(?:do\s*not|don't|without|never|donot|skip|bypass)"
-_VERB = r"(?:调用|使用|执行|读取|run|invoke|use|execute|calling|called|call|using|running|invoking|skip|skipping|bypass)"
-_TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search|all\s+tools|所有工具)"
+_CN_NEG = r"(?:不要|不得|禁止|不能|别|不用|无需|不须|不许|跳过|不调用|不读取|不要调用|不用调用)"
+_EN_NEG = r"(?:do\s*not|don't|dont|without|never|donot|no\s+need|skip|bypass)"
+_VERB = r"(?:调用|使用|执行|读取|run|invoke|use|execute|call|calling|called|using|running|invoking|skip|skipping|bypass|not\s+invoke|not\s+use|not\s+run|not\s+read)"
+_TOOL_REF = r"(?:devflow\.job\.read|devflow\.catalog\.search|devflow\.job|devflow\.catalog|job\.read|catalog\.search|all\s*tools|所有工具|全部工具|both\s*tools|两个工具)"
 
-SKIP_CN = re.compile(_CN_NEG + r"\s*" + _VERB + r"\s*" + _TOOL_REF, re.IGNORECASE)
-SKIP_CN2 = re.compile(_CN_NEG + r"\s*" + _TOOL_REF + r"\s*" + _VERB, re.IGNORECASE)
-SKIP_EN = re.compile(_EN_NEG + r"\s+" + _VERB + r"\s+" + _TOOL_REF, re.IGNORECASE)
-SKIP_EN2 = re.compile(_EN_NEG + r"\s+" + _TOOL_REF + r"\s+" + _VERB, re.IGNORECASE)
-SKIP_CN3 = re.compile(_CN_NEG + r"\s*" + _TOOL_REF, re.IGNORECASE)
-SKIP_EN3 = re.compile(_EN_NEG + r"\s+" + _TOOL_REF, re.IGNORECASE)
+SKIP_PATTERNS = [
+    re.compile(_CN_NEG + r"[\s\S]{0,10}" + _VERB + r"[\s\S]{0,10}" + _TOOL_REF, re.IGNORECASE),
+    re.compile(_CN_NEG + r"[\s\S]{0,10}" + _TOOL_REF + r"[\s\S]{0,10}" + _VERB, re.IGNORECASE),
+    re.compile(_CN_NEG + r"[\s\S]{0,10}" + _TOOL_REF, re.IGNORECASE),
+    re.compile(_EN_NEG + r"[\s\S]{0,15}" + _VERB + r"[\s\S]{0,15}" + _TOOL_REF, re.IGNORECASE),
+    re.compile(_EN_NEG + r"[\s\S]{0,15}" + _TOOL_REF + r"[\s\S]{0,15}" + _VERB, re.IGNORECASE),
+    re.compile(_EN_NEG + r"[\s\S]{0,15}" + _TOOL_REF, re.IGNORECASE),
+]
+
+# Positive context markers that indicate reading/calling is expected
+_POS_CTX = re.compile(
+    r"(?:请查询|请说明|查询|读取|列出|告诉我|give\s+me|provide|query|read|list|show|fetch)",
+    re.IGNORECASE,
+)
 
 BLOCK2_TRIGGERS = re.compile(
     r"(?:修改|合并|发布|部署|执行生产|执行变更|上线|perform\s+(?:the\s+)?(?:deployment|production)|bypass\s+(?:the\s+)?gates)",
@@ -37,12 +45,9 @@ def _extract_job_ids(text):
 
 
 def _has_skip_tool_prohibition(text):
-    if SKIP_CN.search(text) or SKIP_CN2.search(text):
-        return True
-    if SKIP_EN.search(text) or SKIP_EN2.search(text):
-        return True
-    if SKIP_CN3.search(text) or SKIP_EN3.search(text):
-        return True
+    for pat in SKIP_PATTERNS:
+        if pat.search(text):
+            return True
     return False
 
 
@@ -77,6 +82,8 @@ def _has_block3(text):
 
 
 def _validate_job_records(records):
+    if records is None:
+        return False, "任务记录返回None"
     if not isinstance(records, list) or len(records) == 0:
         return False, "任务记录为空或格式异常"
     for rec in records:
@@ -93,6 +100,8 @@ def _validate_job_records(records):
 
 
 def _validate_catalog(catalog):
+    if catalog is None:
+        return False, "工具目录返回None而非列表"
     if not isinstance(catalog, list) or len(catalog) == 0:
         return False, "工具目录为空或格式异常"
     for item in catalog:
