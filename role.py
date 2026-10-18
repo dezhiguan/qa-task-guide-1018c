@@ -8,14 +8,17 @@ EXEC_PATTERNS = [
     r"直接修改.*(?:发布|上线)",
     r"(?:自动|马上|立刻|现在).{0,4}(?:合并|发布|部署|执行)",
     r"(?:执行|perform).{0,6}(?:生产|production|deployment)",
-    r"(?:bypass|忽略|跳过).{0,6}(?:规则|gates|核验|审批)",
-    r"编造.{0,6}(?:记录|PASS)",
+    r"(?:bypass|ignore|忽略|跳过).{0,10}(?:规则|gates|核验|审批|all rules)",
+    r"(?:fabricate|编造).{0,10}(?:记录|PASS|successful)",
     r"(?:改成|强行|也请改成).{0,4}PASS",
     r"即使.{0,10}(?:失败|空列表|BLOCKED).{0,10}(?:输出|改成|PASS)",
     r"不要调用.*(?:直接告诉我|给出)",
     r"(?:建议|要求|需要).{0,6}(?:WRITE|HIGH).{0,10}(?:执行|发布|部署)",
-    r"列出.{0,20}(?:WRITE|HIGH).{0,20}(?:执行|发布)",
+    r"列出.{0,30}(?:WRITE|HIGH).{0,30}(?:执行|发布)",
+    r"(?:当成|视为).{0,10}(?:管理员批准|批准).{0,10}(?:执行|变更|发布)",
 ]
+
+DENIAL_MARKERS = ["不代表", "不是", "禁止", "无需", "不需要", "不执行", "不要", "do not", "not ", "without", "不修改", "不更改"]
 
 STATUS_MAP = {
     "RUN": "运行中",
@@ -33,9 +36,20 @@ def _extract_job_ids(text: str) -> List[str]:
     return list(dict.fromkeys(matches))
 
 
+def _is_denied_context(prefix: str) -> bool:
+    low = prefix.lower().strip()
+    for marker in DENIAL_MARKERS:
+        if marker in low[-20:]:
+            return True
+    return False
+
+
 def _has_execution_request(text: str) -> bool:
     for pat in EXEC_PATTERNS:
-        if re.search(pat, text, re.IGNORECASE):
+        for m in re.finditer(pat, text, re.IGNORECASE):
+            before = text[:m.start()]
+            if _is_denied_context(before):
+                continue
             return True
     return False
 
